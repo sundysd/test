@@ -8,8 +8,8 @@ public class Image {
 
     String type;
     URI url;
-    String height;
-    String width;
+    int height;
+    int width;
 
     public String getType() {
         return type;
@@ -27,19 +27,19 @@ public class Image {
         this.url = url;
     }
 
-    public String getHeight() {
+    public int getHeight() {
         return height;
     }
 
-    public void setHeight(String height) {
+    public void setHeight(int height) {
         this.height = height;
     }
 
-    public String getWidth() {
+    public int getWidth() {
         return width;
     }
 
-    public void setWidth(String width) {
+    public void setWidth(int width) {
         this.width = width;
     }
 
