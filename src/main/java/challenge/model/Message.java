@@ -2,6 +2,8 @@ package challenge.model;
 
 
 import java.net.URI;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.util.Date;
 
 

@@ -1,9 +1,6 @@
 package challenge;
 
-import challenge.model.Content;
-import challenge.model.MessageDBObj;
-import challenge.model.MessageRequest;
-import challenge.model.UserRequest;
+import challenge.model.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,10 +8,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalTime;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 @RestController
 public class Controller {
@@ -26,9 +22,7 @@ public class Controller {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @RequestMapping(value = "/check", method = { RequestMethod.POST },
-            produces = { "application/json" },
-            consumes = { "application/json" })
+    @RequestMapping(value = "/check", method = { RequestMethod.POST })
     public Map<String, String> check() {
         int result = this.jdbcTemplate.queryForObject("SELECT 1", Integer.class);
         if (result != 1) {
@@ -37,49 +31,161 @@ public class Controller {
         return Collections.singletonMap("health", "ok");
     }
 
-    @RequestMapping(value = "/users", method = { RequestMethod.POST },
-            produces = { "application/json" },
-            consumes = { "application/json" })
+    @RequestMapping(value = "/users", method = { RequestMethod.POST })
     public ResponseEntity createUsers(@RequestBody UserRequest request) {
-        int userid = this.jdbcTemplate.queryForObject("SELECT userid from users where username = '" + request.getUsername() + "'", Integer.class);
-        if (userid >=0) return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("User already exists.");
-        insertUser(request.getUsername(), request.getPassword());
-        return ResponseEntity.ok("User created.");
+        String sql = "SELECT userid from user where username = '" + request.getUsername() + "'";
+
+        List<Integer> certs = this.jdbcTemplate.queryForList(sql, Integer.class);
+        if (certs.isEmpty()) {
+            int id = insertUser(request.getUsername(), request.getPassword());
+            UserResponse user = new UserResponse();
+            user.setId(new Long(id));
+            return ResponseEntity.ok(user);
+        } else {
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("User already exists.");
+        }
     }
 
     @Transactional
-    private int insertUser(String username, String password) {
-        return jdbcTemplate.update("INSERT INTO users(username, password) VALUES(?,?)", username, password);
+    public int insertUser(String username, String password) {
+        jdbcTemplate.update("INSERT INTO user(username, password) VALUES(?,?)", username, password);
+        int id = jdbcTemplate.queryForObject("select last_insert_rowid();", Integer.class);
+        return id;
     }
 
-    @RequestMapping(value = "/login", method = { RequestMethod.POST },
-            produces = { "application/json" },
-            consumes = { "application/json" })
-    public void login() {
+    @RequestMapping(value = "/login", method = { RequestMethod.POST })
+    public ResponseEntity login(@RequestBody UserRequest request) {
+        String sql = "SELECT userid from user where username = '" + request.getUsername()
+                + "' and password = '" + request.getPassword() + "'"  ;
+
+        List<Integer> certs = this.jdbcTemplate.queryForList(sql, Integer.class);
+        if (!certs.isEmpty()) {
+            int id = insertUser(request.getUsername(), request.getPassword());
+            UserResponse user = new UserResponse();
+            user.setId(new Long(id));
+            return ResponseEntity.ok(user);
+        } else {
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("User not exists.");
+        }
     }
 
-    @RequestMapping(value = "/messages", method = { RequestMethod.POST },
-            produces = { "application/json" },
-            consumes = { "application/json" })
+    @RequestMapping(value = "/messages", method = { RequestMethod.POST })
     public ResponseEntity sendMessage(@RequestBody MessageRequest request) {
-        System.out.println("user "+ request.getSender() + " sends message to " + request.getRecipient());
-        insertMessage(request.getSender(), request.getRecipient(), request.getContent());
-        return ResponseEntity.ok("message sent.");
+        Content msgToSave = request.getContent();
+        int id = 0;
+        try{
+            if (msgToSave instanceof Text) {
+                id = insertMessage(request.getSender(), request.getRecipient(), (Text) msgToSave);
+            } else if (msgToSave instanceof Image) {
+                id = insertMessage(request.getSender(), request.getRecipient(), (Image) msgToSave);
+            } else if (msgToSave instanceof Video) {
+                id = insertMessage(request.getSender(), request.getRecipient(), (Video) msgToSave);
+            } else {
+                    return ResponseEntity
+                            .status(HttpStatus.BAD_REQUEST)
+                            .body("Bad message type in Content type, only support text, video, image.");
+            }
+            String sql = "select messageId, timestamp from message where messageId = " + id;
+            List<Map<String, Object>> rows = this.jdbcTemplate.queryForList(sql);
+
+            MessageResponse msg = new MessageResponse();
+            rows.stream().forEach((row) -> {
+                msg.setId(new Long((int) row.get("messageId")));
+
+                Calendar t = new GregorianCalendar();
+                SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd HH:mm:ss",Locale.getDefault());
+                Date dt = null; //replace 4 with the column index
+                try {
+                    dt = sdf.parse((String) row.get("timestamp"));
+                } catch (ParseException e) {
+                    e.printStackTrace();
+                }
+                t.setTime(dt);
+
+                msg.setTimestamp(dt);
+            });
+
+            System.out.println("user "+ request.getSender() + " sends message to " + request.getRecipient());
+            //TODO add other logic here to really send message from sender to recipient
+            return ResponseEntity.ok(msg);
+        }catch(Exception e) {
+            System.out.println(e.getStackTrace());
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Error while sending messages.");
+        }
+
     }
 
     @Transactional
-    private int insertMessage(long sender, long recipient, Content content) {
-        return jdbcTemplate.update("INSERT INTO messages(sender, recipient,type, timestamp) VALUES(?,?,?)", sender, recipient, content.getType(),new java.util.Date());
+    public int insertMessage(long sender, long recipient, Text text) {
+        jdbcTemplate.update("INSERT INTO message(sender, recipient,type, text) VALUES(?,?,?,?)",
+                sender, recipient, "text", text.getText());
+        int id = jdbcTemplate.queryForObject("select last_insert_rowid();", Integer.class);
+        return id;
     }
-/*
+    @Transactional
+    public int insertMessage(long sender, long recipient, Image image) {
+        jdbcTemplate.update("INSERT INTO message(sender, recipient,type, url, height, width) VALUES(?,?,?,?)",
+                sender, recipient, "image", image.getUrl(), image.getHeight(), image.getWidth());
+        int id = jdbcTemplate.queryForObject("select last_insert_rowid();", Integer.class);
+        return id;
+    }
+    @Transactional
+    public int insertMessage(long sender, long recipient, Video video) {
+        jdbcTemplate.update("INSERT INTO message(sender, recipient,type, url, source) VALUES(?,?,?,?,?)",
+                sender, recipient, "video", video.getUrl(), video.getSource());
+        int id = jdbcTemplate.queryForObject("select last_insert_rowid();", Integer.class);
+        return id;
+    }
+
     @RequestMapping(value = "/messages", method = { RequestMethod.GET },
             produces = { "application/json" },
             consumes = { "application/json" })
-    public void getMessages(@RequestParam("recipient") int recipient,
+    public ResponseEntity getMessages(@RequestParam("recipient") int recipient,
                             @RequestParam("start") int start,
                             @RequestParam(value = "limit", defaultValue = "100") int limit) {
         System.out.println("finding message with recipient "+ recipient + " starting from message " + start + " limit to " + limit + " messages");
-        List<MessageDBObj> data = this.jdbcTemplate.query("select top "+ limit +" * from messages where recipient = " + recipient + " and id >= " + start + " order by id ", MessageDBObj.class);
-    }*/
+        String sql = "select * from message where recipient = " + recipient + " and messageId >= " + start + " order by messageid ";
+
+        List<Map<String, Object>> rows = this.jdbcTemplate.queryForList(sql);
+
+        List<Message> list = new ArrayList();
+        rows.stream().forEach((row) -> {
+            Message msg = new Message();
+            msg.setId(new Long((int) row.get("messageId")));
+            msg.setRecipient(new Long((int) row.get("recipient")));
+            msg.setRecipient(new Long((int) row.get("sender")));
+
+            Calendar t = new GregorianCalendar();
+            SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd HH:mm:ss",Locale.getDefault());
+            Date dt = null; //replace 4 with the column index
+            try {
+                dt = sdf.parse((String) row.get("timestamp"));
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            t.setTime(dt);
+
+            msg.setTimestamp(dt);
+            String type = (String) row.get("type");
+            Content content = null;
+            if ("text".equalsIgnoreCase(type)) {
+                content  = new Text((String) row.get("text"));
+            } else if ("image".equalsIgnoreCase(type)) {
+                content  = new Image((String) row.get("url"), (int) row.get("height"), (int) row.get("width"));
+            } else if ("video".equalsIgnoreCase(type)) {
+                content = new Video((String) row.get("url"), (String) row.get("source"));
+            }
+            msg.setContent(content);
+            list.add(msg);
+        });
+        return ResponseEntity.ok(list);
+
+    }
 
 }
